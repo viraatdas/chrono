@@ -7,6 +7,7 @@ import { AbstractParserWithWordBoundaryChecking } from "../../../common/parsers/
 
 const PATTERN = new RegExp(
     `((?:in)\\s*)?` +
+        `(?:(?:(${YEAR_PATTERN})(?:\\s*-\\s*|\\s+(?:of\\s+)?)))?` +
         `(${matchAnyPattern(MONTH_DICTIONARY)})` +
         `\\s*` +
         `(?:` +
@@ -17,8 +18,9 @@ const PATTERN = new RegExp(
 );
 
 const PREFIX_GROUP = 1;
-const MONTH_NAME_GROUP = 2;
-const YEAR_GROUP = 3;
+const LEADING_YEAR_GROUP = 2;
+const MONTH_NAME_GROUP = 3;
+const YEAR_GROUP = 4;
 
 /**
  * The parser for parsing month name and year.
@@ -33,17 +35,26 @@ export default class ENMonthNameParser extends AbstractParserWithWordBoundaryChe
     }
 
     innerExtract(context: ParsingContext, match: RegExpMatchArray) {
-        const monthName = match[MONTH_NAME_GROUP].toLowerCase();
+        const rawMonthName = match[MONTH_NAME_GROUP];
+        const monthName = rawMonthName.toLowerCase();
 
         // skip some unlikely words "jan", "mar", ..
         if (match[0].length <= 3 && !FULL_MONTH_NAME_DICTIONARY[monthName]) {
             return null;
         }
 
-        const result = context.createParsingResult(
-            match.index + (match[PREFIX_GROUP] || "").length,
-            match.index + match[0].length
-        );
+        if (match[LEADING_YEAR_GROUP] && rawMonthName === "may") {
+            const textAfterMatch = context.text.substring(match.index + match[0].length);
+            if (textAfterMatch.match(/^\s*[a-z]/)) {
+                return null;
+            }
+        }
+
+        const resultStartIndex =
+            match[LEADING_YEAR_GROUP] && match[YEAR_GROUP]
+                ? match.index + match[0].indexOf(match[MONTH_NAME_GROUP])
+                : match.index + (match[PREFIX_GROUP] || "").length;
+        const result = context.createParsingResult(resultStartIndex, match.index + match[0].length);
         result.start.imply("day", 1);
         result.start.addTag("parser/ENMonthNameParser");
 
@@ -52,6 +63,9 @@ export default class ENMonthNameParser extends AbstractParserWithWordBoundaryChe
 
         if (match[YEAR_GROUP]) {
             const year = parseYear(match[YEAR_GROUP]);
+            result.start.assign("year", year);
+        } else if (match[LEADING_YEAR_GROUP]) {
+            const year = parseYear(match[LEADING_YEAR_GROUP]);
             result.start.assign("year", year);
         } else {
             const year = findYearClosestToRef(context.refDate, 1, month);
